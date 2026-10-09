@@ -55,7 +55,10 @@ inline bool CompareImageInfo(const InitImageInfo& a, const InitImageInfo& b) {
   if (a.prior_focal_length != b.prior_focal_length) {
     return a.prior_focal_length > b.prior_focal_length;
   }
-  return a.num_correspondences > b.num_correspondences;
+  if (a.num_correspondences != b.num_correspondences) {
+    return a.num_correspondences > b.num_correspondences;
+  }
+  return a.image_id < b.image_id;
 }
 
 std::vector<image_t> ExtractSortedImageIds(
@@ -74,7 +77,10 @@ void SortAndAppendNextImages(std::vector<std::pair<image_t, float>> image_ranks,
             image_ranks.end(),
             [](const std::pair<image_t, float>& image1,
                const std::pair<image_t, float>& image2) {
-              return image1.second > image2.second;
+              if (image1.second != image2.second) {
+                return image1.second > image2.second;
+              }
+              return image1.first < image2.first;
             });
 
   sorted_images_ids->reserve(sorted_images_ids->size() + image_ranks.size());
@@ -224,66 +230,23 @@ IncrementalMapperImpl::FindInitialImagePair(
                                                      num_registrations);
   }
 
-  ThreadPool thread_pool(options.num_threads);
-  std::vector<std::shared_future<std::optional<InitInfo>>> init_infos;
-  init_infos.reserve(image_ids1.size());
-
-  std::mutex init_image_pairs_mutex;
-  std::atomic_bool stop = false;
-
-  // Try to find good initial pair.
-  for (const image_t image_id1 : image_ids1) {
-    init_infos.push_back(
-        thread_pool.AddTask([&, image_id1]() -> std::optional<InitInfo> {
-          if (stop.load()) {
-            return std::nullopt;
-          }
-
-          const std::vector<image_t> image_ids2 =
-              IncrementalMapperImpl::FindSecondInitialImage(
-                  options,
-                  image_id1,
-                  correspondence_graph,
-                  reconstruction,
-                  num_registrations);
-
-          for (const image_t image_id2 : image_ids2) {
-            if (stop.load()) {
-              return std::nullopt;
-            }
-
-            const image_pair_t pair_id =
-                ImagePairToPairId(image_id1, image_id2);
-
-            // Try every pair only once.
-            {
-              std::lock_guard<std::mutex> lock_guard(init_image_pairs_mutex);
-              if (!init_image_pairs.emplace(pair_id).second) {
-                continue;
-              }
-            }
-
-            std::optional<InitInfo> pair_init_info =
-                IncrementalMapperImpl::EstimateInitialTwoViewGeometry(
-                    options, database_cache, image_id1, image_id2);
-            if (pair_init_info.has_value()) {
-              stop.store(true);
-              return pair_init_info;
-            }
-          }
-
-          return std::nullopt;
-        }));
-  }
-
-  // Iterate through the already computed results and return the first
-  // successful result. This is deterministic and produces the same result
-  // as the single-threaded version.
-  for (auto& init_info_future : init_infos) {
-    std::optional<InitInfo> result = init_info_future.get();
-    if (result.has_value()) {
-      thread_pool.Stop();
-      return result;
+  // Initial-pair selection must follow candidate priority, not worker speed.
+  // A shared stop flag lets a later successful task cancel earlier candidates;
+  // shared pair-history insertion is also sensitive to task scheduling.
+  for (const image_t candidate1 : image_ids1) {
+    const std::vector<image_t> image_ids2 = FindSecondInitialImage(
+        options, candidate1, correspondence_graph, reconstruction,
+        num_registrations);
+    for (const image_t candidate2 : image_ids2) {
+      const image_pair_t pair_id = ImagePairToPairId(candidate1, candidate2);
+      if (!init_image_pairs.emplace(pair_id).second) {
+        continue;
+      }
+      std::optional<InitInfo> result = EstimateInitialTwoViewGeometry(
+          options, database_cache, candidate1, candidate2);
+      if (result.has_value()) {
+        return result;
+      }
     }
   }
 
@@ -400,7 +363,10 @@ std::vector<image_t> IncrementalMapperImpl::FindLocalBundle(
             overlapping_images.end(),
             [](const std::pair<image_t, size_t>& image1,
                const std::pair<image_t, size_t>& image2) {
-              return image1.second > image2.second;
+              if (image1.second != image2.second) {
+                return image1.second > image2.second;
+              }
+              return image1.first < image2.first;
             });
 
   // The local bundle is composed of the given image and its most connected

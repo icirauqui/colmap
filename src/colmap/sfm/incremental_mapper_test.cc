@@ -353,6 +353,33 @@ TEST_F(IncrementalMapperTest, FindLocalBundle) {
   }
 }
 
+TEST_F(IncrementalMapperTest, InitialPairIndependentOfWorkerCount) {
+  options_.random_seed = 7;
+  image_t expected1 = kInvalidImageId;
+  image_t expected2 = kInvalidImageId;
+  Rigid3d expected_pose;
+  options_.num_threads = 1;
+  ASSERT_TRUE(mapper_->FindInitialImagePair(
+      options_, expected1, expected2, expected_pose));
+  for (const int num_threads : {1, 2, 4, 8}) {
+    options_.num_threads = num_threads;
+    for (int repeat = 0; repeat < 10; ++repeat) {
+      mapper_->ResetInitializationStats();
+      image_t actual1 = kInvalidImageId;
+      image_t actual2 = kInvalidImageId;
+      Rigid3d actual_pose;
+      ASSERT_TRUE(mapper_->FindInitialImagePair(
+          options_, actual1, actual2, actual_pose));
+      EXPECT_EQ(actual1, expected1);
+      EXPECT_EQ(actual2, expected2);
+      EXPECT_EQ((actual_pose.translation() - expected_pose.translation()).norm(),
+                0.0);
+      EXPECT_EQ((actual_pose.rotation().coeffs() -
+                 expected_pose.rotation().coeffs()).norm(), 0.0);
+    }
+  }
+}
+
 TEST_F(IncrementalMapperTest, ResetInitializationStats) {
   // Find an initial pair (updates init stats internally)
   ASSERT_TRUE(mapper_->FindInitialImagePair(

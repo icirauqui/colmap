@@ -1243,3 +1243,138 @@ TEST(PosePriorBundleAdjuster, OptimizationRobustToOutliers) {
 
 }  // namespace
 }  // namespace colmap
+
+// Native analytical regression for the observed B numerical-order gap.
+// No images, dataset bank, evaluator truth or accuracy selection are used.
+#include "colmap/estimators/bundle_adjustment_ceres.h"
+#include "colmap/scene/synthetic.h"
+
+#include <algorithm>
+#include <map>
+#include <string>
+#include <vector>
+#include <gtest/gtest.h>
+
+namespace colmap {
+namespace {
+
+Reconstruction NumericOrderFixture() {
+  Reconstruction reconstruction;
+  SyntheticDatasetOptions scene;
+  scene.num_rigs = 4;
+  scene.num_cameras_per_rig = 1;
+  scene.num_frames_per_rig = 1;
+  scene.num_points3D = 20;
+  scene.camera_model_id = PinholeCameraModel::model_id;
+  scene.camera_params = {1000., 1010., 512., 384.};
+  SynthesizeDataset(scene, &reconstruction);
+  SyntheticNoiseOptions noise;
+  noise.point2D_stddev = 0.05;
+  noise.point3D_stddev = 0.01;
+  noise.rig_from_world_rotation_stddev = 0.1;
+  noise.rig_from_world_translation_stddev = 0.001;
+  SynthesizeNoise(noise, &reconstruction);
+  return reconstruction;
+}
+
+BundleAdjustmentConfig NumericOrderConfig(const int trial) {
+  BundleAdjustmentConfig config;
+  // Same image identities; rotate insertion order without changing membership.
+  for (int offset = 0; offset < 4; ++offset) {
+    config.AddImage(1 + (offset + trial) % 4);
+  }
+  config.FixGauge(BundleAdjustmentGauge::TWO_CAMS_FROM_WORLD);
+  return config;
+}
+
+BundleAdjustmentOptions NumericOrderOptions() {
+  BundleAdjustmentOptions options;
+  options.refine_focal_length = false;
+  options.refine_principal_point = false;
+  options.refine_extra_params = false;
+  options.ceres->solver_options.num_threads = 1;
+  options.ceres->solver_options.max_num_iterations = 30;
+  options.ceres->solver_options.function_tolerance = 0;
+  options.ceres->solver_options.gradient_tolerance = 0;
+  options.ceres->solver_options.parameter_tolerance = 0;
+  return options;
+}
+
+std::string NumericOrderValues(const Reconstruction& reconstruction) {
+  std::string bytes;
+  std::vector<frame_t> frames;
+  for (const auto& [id, frame] : reconstruction.Frames()) {
+    frames.push_back(id);
+  }
+  std::sort(frames.begin(), frames.end());
+  for (const frame_t id : frames) {
+    const auto& pose = reconstruction.Frame(id).RigFromWorld();
+    bytes.append(reinterpret_cast<const char*>(pose.params.data()),
+                 7 * sizeof(double));
+  }
+  std::vector<point3D_t> points;
+  for (const auto& [id, point] : reconstruction.Points3D()) {
+    points.push_back(id);
+  }
+  std::sort(points.begin(), points.end());
+  for (const point3D_t id : points) {
+    bytes.append(reinterpret_cast<const char*>(
+                     reconstruction.Point3D(id).xyz.data()),
+                 3 * sizeof(double));
+  }
+  return bytes;
+}
+
+TEST(NumericOrderRegression, CameraResidualAssemblyUsesIdentityOrder) {
+  const Reconstruction fixture = NumericOrderFixture();
+  for (int trial = 0; trial < 16; ++trial) {
+    Reconstruction reconstruction = fixture;
+    auto adjuster = CreateDefaultCeresBundleAdjuster(
+        NumericOrderOptions(), NumericOrderConfig(trial), reconstruction);
+    auto* native = dynamic_cast<CeresBundleAdjuster*>(adjuster.get());
+    ASSERT_NE(native, nullptr);
+    auto& problem = *native->Problem();
+    std::map<const double*, image_t> camera_images;
+    for (image_t id = 1; id <= 4; ++id) {
+      const auto& image = reconstruction.Image(id);
+      const auto* pointer = reconstruction.Camera(image.CameraId()).params.data();
+      ASSERT_TRUE(camera_images.emplace(pointer, id).second);
+    }
+    std::vector<ceres::ResidualBlockId> residuals;
+    problem.GetResidualBlocks(&residuals);
+    ASSERT_FALSE(residuals.empty());
+    std::vector<image_t> image_order;
+    for (const auto residual : residuals) {
+      std::vector<double*> parameters;
+      problem.GetParameterBlocksForResidualBlock(residual, &parameters);
+      ASSERT_FALSE(parameters.empty());
+      const auto found = camera_images.find(parameters.back());
+      ASSERT_NE(found, camera_images.end());
+      image_order.push_back(found->second);
+    }
+    EXPECT_TRUE(std::is_sorted(image_order.begin(), image_order.end()))
+        << "Unordered config membership changed native residual assembly";
+  }
+}
+
+TEST(NumericOrderRegression, RepeatedSolvePreservesExactRawValues) {
+  const Reconstruction fixture = NumericOrderFixture();
+  std::string reference;
+  for (int trial = 0; trial < 16; ++trial) {
+    Reconstruction reconstruction = fixture;
+    auto adjuster = CreateDefaultCeresBundleAdjuster(
+        NumericOrderOptions(), NumericOrderConfig(trial), reconstruction);
+    const auto summary = adjuster->Solve();
+    ASSERT_NE(summary->termination_type, BundleAdjustmentTerminationType::FAILURE);
+    const std::string values = NumericOrderValues(reconstruction);
+    ASSERT_FALSE(values.empty());
+    if (trial == 0) {
+      reference = values;
+    } else {
+      EXPECT_TRUE(values == reference) << "Native solve is not byte-exact";
+    }
+  }
+}
+
+}  // namespace
+}  // namespace colmap

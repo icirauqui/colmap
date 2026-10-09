@@ -40,6 +40,7 @@
 #include "colmap/util/threading.h"
 
 #include <iomanip>
+#include <set>
 
 namespace colmap {
 
@@ -643,13 +644,18 @@ class DefaultBundleAdjuster : public CeresBundleAdjuster {
     // Set up problem.
     // Warning: AddPointsToProblem assumes that AddImageToProblem is called
     // first. Do not change order of instructions!
-    for (const image_t image_id : config_.Images()) {
+    // Hash-set traversal is process-dependent. Keep residual/parameter insertion
+    // in identity order so identical inputs use the same floating-point sums.
+    for (const image_t image_id :
+         std::set<image_t>(config_.Images().begin(), config_.Images().end())) {
       AddImageToProblem(image_id, reconstruction);
     }
-    for (const auto point3D_id : config_.VariablePoints()) {
+    for (const point3D_t point3D_id : std::set<point3D_t>(
+             config_.VariablePoints().begin(), config_.VariablePoints().end())) {
       AddPointToProblem(point3D_id, reconstruction);
     }
-    for (const auto point3D_id : config_.ConstantPoints()) {
+    for (const point3D_t point3D_id : std::set<point3D_t>(
+             config_.ConstantPoints().begin(), config_.ConstantPoints().end())) {
       AddPointToProblem(point3D_id, reconstruction);
     }
 
