@@ -1,6 +1,24 @@
 COLMAP
 ======
 
+Research fork: mapper ordering fixes
+-----------------------------------
+
+This repository is a research fork of [COLMAP](https://github.com/colmap/colmap),
+based on upstream **4.2.0**. The `mapper-ordering-fixes` branch contains corrections
+to initial-pair selection, image-ranking ties and Ceres bundle-adjustment
+assembly order, plus native regression tests. The fixed source release is
+[`4.2.0-ordering-fixes.1`](https://github.com/icirauqui/colmap/tree/4.2.0-ordering-fixes.1).
+See [FORK_CHANGES.md](FORK_CHANGES.md) for the exact upstream revision, patch
+details, build/test commands and scope of the repeatability evidence.
+
+These are execution-order corrections used by Pipeline B in the Synthetic
+Deformable Tubular Benchmark study; they do not introduce a new SfM method.
+Upstream release binaries do not include these patches. For fork-specific
+questions use [this fork's issue tracker](https://github.com/icirauqui/colmap/issues).
+The original COLMAP documentation, acknowledgments, citations and license
+are retained below and in [COPYING.txt](COPYING.txt).
+
 About
 -----
 
