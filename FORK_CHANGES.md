@@ -98,5 +98,7 @@ affinity and stage commands. In the appearance comparison, B-INIT1 extraction
 and matching were retained, followed by B-ORDER1 mapping; physical inputs were
 matched with B-ORDER1. This combined release does not relabel those historical
 producer identities or imply fresh end-to-end runs for the retained matches.
-Full publication of the separate reproduction package is a remaining release
-task; this repository provides the corrected source and native tests.
+The separate [reproducibility material](https://huggingface.co/datasets/icirauqui/synthetic-deformable-tubular-benchmark-reproducibility/tree/v1.0.2)
+is publicly available with frozen protocols, source/control records, final
+results and qualified runtime archives. This repository provides the corrected
+source and native tests.
